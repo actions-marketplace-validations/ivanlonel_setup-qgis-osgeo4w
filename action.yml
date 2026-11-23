@@ -1,0 +1,126 @@
+name: Setup QGIS OSGeo4W
+description: >-
+  Install QGIS on Windows runners from the official OSGeo4W MSI (download.osgeo.org), verified by
+  SHA-256 and Authenticode, with the installed tree cached between runs.
+author: Ivan Lonel
+branding:
+  icon: map
+  color: green
+
+inputs:
+  version:
+    description: >-
+      QGIS version or prefix: 4, 4.2, 4.2.3 or an exact build 4.2.3-2. Prefixes match on dot boundaries
+      and pick the greatest build. Empty or `latest` = the greatest available.
+    default: ""
+  flavor:
+    description: "`standard` (QGIS-OSGeo4W-*) or `grids` (QGIS-Grids-OSGeo4W-*). Empty = standard."
+    default: ""
+  installer:
+    description: >-
+      Exact installer file name, e.g. QGIS-Grids-OSGeo4W-4.2.3-2 (.msi optional). Mutually exclusive
+      with version and flavor; reaches any MSI family on the server (e.g. QGISQT6-OSGeo4W-*).
+    default: ""
+  sha256:
+    description: >-
+      Expected SHA-256 of the MSI. Requires an exact build (version x.y.z-r or installer). Replaces the
+      server's .sha256sum, so the run fails if the file on the server is ever replaced.
+    default: ""
+  install-dir:
+    description: Absolute install directory. Empty = the MSI default, C:\Program Files\QGIS <x.y.z>.
+    default: ""
+  cache:
+    description: Cache the installed tree (true/false).
+    default: "true"
+  verify-signature:
+    description: Require a valid Authenticode signature by The Open Source Geospatial Foundation (true/false).
+    default: "true"
+  add-to-path:
+    description: Prepend <root>\bin to PATH for later steps (true/false).
+    default: "false"
+  download-timeout-minutes:
+    description: Budget for fetching the listing, .sha256sum and MSI, retries included. 0 = no limit.
+    default: "30"
+  install-timeout-minutes:
+    description: Budget for msiexec plus the qgis_process check. 0 = no limit.
+    default: "20"
+
+outputs:
+  version:
+    description: Resolved build, e.g. 4.4.0-1.
+    value: ${{ steps.resolve.outputs.version }}
+  installer:
+    description: Resolved MSI file name.
+    value: ${{ steps.resolve.outputs.installer }}
+  sha256:
+    description: SHA-256 the MSI was verified against.
+    value: ${{ steps.resolve.outputs.sha256 }}
+  cache-hit:
+    description: "`true` if the installed tree came from the cache."
+    value: ${{ steps.install.outputs.cache-hit }}
+  root:
+    description: Install root (OSGEO4W_ROOT).
+    value: ${{ steps.install.outputs.root }}
+  prefix:
+    description: QGIS prefix path, <root>\apps\qgis or <root>\apps\qgis-ltr depending on the build.
+    value: ${{ steps.install.outputs.prefix }}
+  qgis-process:
+    description: Path to <root>\bin\qgis_process-<package>.bat.
+    value: ${{ steps.install.outputs.qgis-process }}
+  python:
+    description: Path to the bundled python.exe (<root>\apps\Python3*\python.exe).
+    value: ${{ steps.install.outputs.python }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve QGIS installer
+      id: resolve
+      shell: pwsh
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_FLAVOR: ${{ inputs.flavor }}
+        INPUT_INSTALLER: ${{ inputs.installer }}
+        INPUT_SHA256: ${{ inputs.sha256 }}
+        INPUT_INSTALL_DIR: ${{ inputs.install-dir }}
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_VERIFY_SIGNATURE: ${{ inputs.verify-signature }}
+        INPUT_ADD_TO_PATH: ${{ inputs.add-to-path }}
+        INPUT_DOWNLOAD_TIMEOUT_MINUTES: ${{ inputs.download-timeout-minutes }}
+        INPUT_INSTALL_TIMEOUT_MINUTES: ${{ inputs.install-timeout-minutes }}
+      run: '& (Join-Path $env:GITHUB_ACTION_PATH setup-qgis.ps1) -Phase resolve'
+
+    - name: Restore cached QGIS tree
+      id: restore
+      if: inputs.cache == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.install-dir }}
+        key: ${{ steps.resolve.outputs.cache-key }}
+
+    - name: Install QGIS
+      id: install
+      shell: pwsh
+      env:
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_VERIFY_SIGNATURE: ${{ inputs.verify-signature }}
+        INPUT_ADD_TO_PATH: ${{ inputs.add-to-path }}
+        INPUT_DOWNLOAD_TIMEOUT_MINUTES: ${{ inputs.download-timeout-minutes }}
+        INPUT_INSTALL_TIMEOUT_MINUTES: ${{ inputs.install-timeout-minutes }}
+        SQO_INSTALLER: ${{ steps.resolve.outputs.installer }}
+        SQO_SHA256: ${{ steps.resolve.outputs.sha256 }}
+        SQO_INSTALL_DIR: ${{ steps.resolve.outputs.install-dir }}
+        SQO_CACHE_KEY: ${{ steps.resolve.outputs.cache-key }}
+        SQO_RESOLVE_SECONDS: ${{ steps.resolve.outputs.resolve-seconds }}
+        SQO_RESOLVED_AT: ${{ steps.resolve.outputs.resolved-at }}
+        SQO_RESTORE_HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: '& (Join-Path $env:GITHUB_ACTION_PATH setup-qgis.ps1) -Phase install'
+
+    # Saved now, not in a post step: the tree is still pristine, and the caller's later failures
+    # (or a cancelled run) can't stop it. A key that already exists only warns.
+    - name: Save QGIS tree to cache
+      if: inputs.cache == 'true' && steps.install.outputs.fresh == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.resolve.outputs.install-dir }}
+        key: ${{ steps.resolve.outputs.cache-key }}
