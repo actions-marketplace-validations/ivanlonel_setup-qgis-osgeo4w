@@ -1,0 +1,89 @@
+name: "🪟 e2e"
+
+on:
+  workflow_call:
+    inputs:
+      expect-cache-hit:
+        description: Fail unless the installed tree came from the cache.
+        type: boolean
+        required: true
+
+permissions: {}
+
+jobs:
+  install:
+    name: "${{ matrix.case }} · ${{ matrix.runner }}"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each case is one cached tree (~1 GB) per runner image; mind the repo's 10 GB cache budget.
+        include:
+          - case: latest
+            runner: windows-2025
+          - case: latest
+            runner: windows-2022
+          - case: "3.40"
+            runner: windows-2025
+            version: "3.40"
+            expect-package: qgis-ltr
+          - case: pinned
+            runner: windows-2025
+            installer: QGIS-OSGeo4W-3.44.16-1
+            sha256: 6d1dc453ab537b2bba53194e6d240d9aa56e04d4a08b6194aebc2c0176562621
+            expect-version: 3.44.16-1
+            expect-package: qgis-ltr
+
+    steps:
+      # $/ resolves this repository at the running commit, no checkout needed.
+      - name: Set up QGIS
+        id: qgis
+        uses: $/
+        with:
+          version: ${{ matrix.version }}
+          installer: ${{ matrix.installer }}
+          sha256: ${{ matrix.sha256 }}
+          add-to-path: true
+
+      - name: Check the outputs
+        shell: pwsh
+        env:
+          OUT_VERSION: ${{ steps.qgis.outputs.version }}
+          OUT_INSTALLER: ${{ steps.qgis.outputs.installer }}
+          OUT_SHA256: ${{ steps.qgis.outputs.sha256 }}
+          OUT_CACHE_HIT: ${{ steps.qgis.outputs.cache-hit }}
+          OUT_ROOT: ${{ steps.qgis.outputs.root }}
+          OUT_PREFIX: ${{ steps.qgis.outputs.prefix }}
+          OUT_QGIS_PROCESS: ${{ steps.qgis.outputs.qgis-process }}
+          OUT_PYTHON: ${{ steps.qgis.outputs.python }}
+          EXPECT_VERSION: ${{ matrix.expect-version }}
+          EXPECT_VERSION_PREFIX: ${{ matrix.version }}
+          EXPECT_PACKAGE: ${{ matrix.expect-package }}
+          EXPECT_CACHE_HIT: ${{ inputs.expect-cache-hit }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem env:OUT_* | Format-Table -AutoSize Name, Value | Out-String -Width 250 | Write-Host
+          function Assert([bool] $Ok, [string] $Why) { if (-not $Ok) { throw $Why } }
+          Assert ($env:OUT_VERSION -match '^\d+\.\d+\.\d+-\d+$') "version '$env:OUT_VERSION'"
+          Assert ($env:OUT_INSTALLER -like "*-$env:OUT_VERSION.msi") "installer '$env:OUT_INSTALLER'"
+          Assert ($env:OUT_SHA256 -match '^[0-9a-f]{64}$') "sha256 '$env:OUT_SHA256'"
+          foreach ($p in $env:OUT_ROOT, $env:OUT_PREFIX, $env:OUT_QGIS_PROCESS, $env:OUT_PYTHON) { Assert (Test-Path -LiteralPath $p) "missing $p" }
+          if ($env:EXPECT_VERSION) { Assert ($env:OUT_VERSION -eq $env:EXPECT_VERSION) "expected $env:EXPECT_VERSION" }
+          if ($env:EXPECT_VERSION_PREFIX) { Assert ($env:OUT_VERSION.StartsWith("$env:EXPECT_VERSION_PREFIX.")) "expected $env:EXPECT_VERSION_PREFIX.x" }
+          if ($env:EXPECT_PACKAGE) { Assert ((Split-Path -Leaf $env:OUT_PREFIX) -eq $env:EXPECT_PACKAGE) "expected apps\$env:EXPECT_PACKAGE" }
+          if ($env:EXPECT_CACHE_HIT -eq 'true') { Assert ($env:OUT_CACHE_HIT -eq 'true') 'expected a cache hit' }
+          & $env:OUT_QGIS_PROCESS --version
+          Assert ($LASTEXITCODE -eq 0) "qgis_process exited $LASTEXITCODE"
+
+      - name: Check add-to-path
+        shell: pwsh
+        run: |
+          # <root>\bin holds the OSGeo4W tools (qgis_process.exe itself lives in apps\<package>\bin).
+          $cmd = Get-Command gdalinfo.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
+          Write-Host "gdalinfo.exe resolves to $($cmd.Source)"
+          & $cmd.Source --version
+          if ($LASTEXITCODE) { throw "gdalinfo exited $LASTEXITCODE" }

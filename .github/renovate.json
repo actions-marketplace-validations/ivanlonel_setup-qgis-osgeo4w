@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":configMigration",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "America/Sao_Paulo",
+  "schedule": [
+    // Before 8am every Monday.
+    "* 0-7 * * 1"
+  ],
+  "minimumReleaseAge": "1 day",
+  "automerge": true,
+  "automergeStrategy": "squash",
+  // github-actions also covers the root action.yml, whose nested actions/cache pins ship to users.
+  "enabledManagers": [
+    "github-actions",
+    "pre-commit"
+  ],
+  // pre-commit support is in beta and needs an explicit opt-in.
+  "pre-commit": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "addLabels": [
+        "github-actions"
+      ],
+      "groupName": "github-actions"
+    },
+    {
+      "matchManagers": [
+        "pre-commit"
+      ],
+      "addLabels": [
+        "pre-commit"
+      ],
+      "groupName": "pre-commit"
+    }
+  ]
+}

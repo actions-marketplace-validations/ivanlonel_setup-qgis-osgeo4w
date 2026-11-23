@@ -1,0 +1,66 @@
+name: "✅ Linting"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  prek:
+    name: "✅ prek"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Get source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Every commit, not only the tip, for the secret scan below: at depth 1 a secret added
+          # and then removed inside a pull request passes, and a rebase merge lands it on main.
+          fetch-depth: 0
+
+      - name: Run prek
+        uses: j178/prek-action@7b101f8338a08d2bd6fdb3625e4e7692428763a3 # v3.1.1
+        with:
+          prek-version: "v0.5.11"
+          extra-args: --all-files --verbose
+
+      # The commit-time gitleaks hook scans staged changes, and nothing is staged here.
+      - name: Scan the commits for secrets
+        uses: j178/prek-action@7b101f8338a08d2bd6fdb3625e4e7692428763a3 # v3.1.1
+        with:
+          prek-version: "v0.5.11"
+          extra-args: --all-files --verbose --hook-stage manual gitleaks-history
+
+  powershell:
+    name: "✅ PSScriptAnalyzer"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Get source code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint PowerShell
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-PSResource PSScriptAnalyzer -TrustRepository -Quiet }
+          $findings = @(Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1)
+          $findings | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 250 | Write-Host
+          if ($findings) { exit 1 }
